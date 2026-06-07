@@ -52,13 +52,21 @@ ss -ltn "sport = :PORT" | grep -q LISTEN && echo OCUPADA || echo LIVRE
    cd apps/<app> && ./node_modules/.bin/<bin> dev --port PORT > /tmp/dev-here-PORT.log 2>&1
    ```
 
-4. **Espere o bind TCP**, em outro Bash background:
+4. **Espere o bind TCP** num Bash **bloqueante** (foreground) — *não* use `run_in_background`
+   aqui. Se a espera rodar em background, você avança e conecta a aba antes do server existir;
+   o `navigate` acerta uma porta sem listener. Bloqueie até o bind, depois siga pro passo 3:
 
    ```bash
    until ss -ltn "sport = :PORT" | grep -q LISTEN; do sleep 0.5; done
    ```
 
-   ~20s sem subir → leia o log e reporte o erro.
+   ~20s sem subir → leia o log e reporte o erro. (Primeiro build sem cache pode levar bem mais
+   que isso — se o log mostra "compiling", siga esperando.)
+
+5. **"Já tem server rodando" mesmo com a porta livre.** Alguns dev servers (ex. Next recente)
+   permitem só *uma* instância por diretório, independente da porta. Se o comando recusar com
+   "another server is already running" embora `ss` diga LIVRE, há outra instância no mesmo dir
+   noutra porta — ofereça reusá-la ou derrubá-la (com confirmação), não force.
 
 ### 3. Conectar e travar a aba
 
@@ -69,16 +77,26 @@ ss -ltn "sport = :PORT" | grep -q LISTEN && echo OCUPADA || echo LIVRE
    `localhost:PORT`, reuse-a; senão `tabs_create_mcp`. `navigate` pra `http://localhost:PORT`
    (se não carregar, tente `https://`).
 3. **Grave o `tab_id` como `TARGET_TAB_ID`.**
-4. **Cheque a URL final.** Se redirecionou pra login (`/login`, `/auth`, `/sign-in`, `/entrar`,
-   `/acesso`, `/conta` e afins), **pare e peça pro usuário logar** — você nunca insere
-   credenciais. Quando avisar, siga.
+4. **Cheque a URL final — mas não confie no retorno do `navigate`.** Ele às vezes devolve a URL
+   antiga (`chrome://newtab/`) antes da navegação assentar. Confirme a URL real com um segundo
+   `tabs_context_mcp` (ou `read_page`) antes de decidir. Se redirecionou pra login (`/login`,
+   `/auth`, `/sign-in`, `/entrar`, `/acesso`, `/conta` e afins), **pare e peça pro usuário
+   logar** — você nunca insere credenciais. Quando avisar, siga. (Se a URL *ficou* na rota pedida
+   mas a tela mostra outra coisa, é redirect client-side por hidratação, não auth — trate como
+   carregou.)
 
 Sem screenshot — devolva o controle.
 
 ### 4. Armar o vigia (Monitor tool)
 
+O vigia é o **contrato** desta skill — é o que entrega valor enquanto você devolve o controle.
+Arme-o sempre, mesmo quando `/dev-here` é só um passo de um trabalho maior: não saia pra tarefa
+deixando o server sem vigia.
+
 Vigia **erros/warnings no log** e a **porta (se cair)**. Vigiar a porta — não um PID — sobrevive
-a reinícios do dev server:
+a reinícios do dev server. Cheque o listener com `ss` (não `lsof`): `lsof -ti tcp:PORT` lista
+*qualquer* processo ligado à porta, incluindo o **browser** conectado — quando ele desconecta,
+parece falsamente que o server caiu:
 
 ```bash
 tail -n 0 -f /tmp/dev-here-PORT.log | grep -E --line-buffered \
@@ -86,16 +104,21 @@ tail -n 0 -f /tmp/dev-here-PORT.log | grep -E --line-buffered \
 TPID=$!
 miss=0
 while true; do
-  if lsof -ti tcp:PORT >/dev/null 2>&1; then miss=0; else miss=$((miss+1)); [ $miss -ge 2 ] && break; fi
+  if ss -ltn "sport = :PORT" | grep -q LISTEN; then miss=0; else miss=$((miss+1)); [ $miss -ge 2 ] && break; fi
   sleep 2
 done
 kill $TPID 2>/dev/null
 echo "SERVER caiu na porta PORT — me peça pra subir de novo"
 ```
 
-`description: "server na porta PORT"`, `persistent: true`. `tail -n 0` = só linhas novas; dois
-misses (~4s sem a porta) = caiu de verdade, não um reinício. Server caiu → ofereça subir de
-novo. Erro relevante → `PushNotification`.
+`description: "server na porta PORT"`, `persistent: true`. **Não** sete um `timeout_ms` curto —
+`persistent` já mantém o vigia vivo; um timeout de poucos minutos deixa o server sem vigia no
+meio de uma sessão longa, sem aviso. `tail -n 0` = só linhas novas; dois misses (~4s sem a porta)
+= caiu de verdade, não um reinício. Server caiu → ofereça subir de novo. Erro relevante →
+`PushNotification` — mas **trie antes**: erro transitório de infra (DNS `EAI_AGAIN`, conexão a
+serviço externo, `DeprecationWarning`) não é acionável, não vale push. Se o server está em
+migração de schema e o log enche de erro de coluna/tabela esperado, pause o vigia (`TaskStop`) até
+estabilizar em vez de floodar.
 
 ### 5. Devolver o controle
 
@@ -125,6 +148,13 @@ Reporte curto: porta, log, `TARGET_TAB_ID`, Monitor armado. Pare.
 
 ## Encerrar
 
-Quando a tarefa terminar, **pergunte se quer encerrar**. Se sim: derrube o server
-(`lsof -ti tcp:PORT | xargs -r kill`), `TaskStop` no Monitor, `tabs_close_mcp` no
-`TARGET_TAB_ID` (só a sua aba), e remova o log.
+Quando a tarefa terminar, **pergunte se quer encerrar**. Se sim, nesta ordem:
+
+1. `TaskStop` na **task de background do server** (se você o subiu com `run_in_background`) — só
+   matar o PID não basta: o harness/supervisor pode respawná-lo e a porta "volta".
+2. `TaskStop` no Monitor.
+3. Derrube o listener com `fuser -k PORT/tcp` (mata exatamente quem detém o socket de escuta;
+   `lsof -ti tcp:PORT | xargs kill` pegaria o **browser** ligado à porta, não o server). Se a
+   porta insistir em voltar mesmo assim, há supervisor externo — avise o usuário, não fique
+   tentando matar às cegas.
+4. `tabs_close_mcp` no `TARGET_TAB_ID` (só a sua aba) e remova o log.
