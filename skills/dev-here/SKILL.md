@@ -1,102 +1,104 @@
 ---
 name: dev-here
 description: |
-  Sobe o dev server desta pasta numa porta específica, abre uma aba do browser travada nessa
-  porta e arma um vigia de erros — sem tocar nas abas de outros projetos. Use ao invocar
-  `/dev-here <porta>` ou ao pedir pra subir/ver/monitorar o server de uma cópia numa porta sem
-  mexer nas outras que rodam em paralelo.
+  Starts this folder's dev server on a specific port, opens a browser tab pinned to that
+  port, and arms an error watcher — without touching other projects' tabs. Use when invoking
+  `/dev-here <port>` or when asked to start/view/monitor the server of one copy on a port
+  without disturbing the others running in parallel.
 ---
 
 # dev-here
 
-## Por que existe
+## Why it exists
 
-Várias cópias do mesmo projeto (branches em pastas irmãs), cada uma numa porta, com várias
-instâncias do Claude Code no mesmo browser, compartilham **um único grupo de abas do MCP**
-(`claude-in-chrome`) — então uma instância pode clicar na aba de outra. Esta skill prende cada
-sessão à **sua** porta.
+Several copies of the same project (branches in sibling folders), each on its own port, with
+several Claude Code instances in the same browser, all share **one single MCP tab group**
+(`claude-in-chrome`) — so one instance can click on another's tab. This skill pins each session
+to **its** port.
 
-## Invocação
+## Invocation
 
-`/dev-here <porta>`. Sem argumento, pergunte a porta. A porta (`PORT`) é a fonte da verdade:
-server bind nela, aba navega nela, Monitor vigia o log dela.
+`/dev-here <port>`. With no argument, ask for the port. The port (`PORT`) is the source of
+truth: the server binds to it, the tab navigates to it, the Monitor watches its log.
 
-Dois princípios: **inspecione antes de perguntar** (ofereça opções com dados reais — apps,
-browsers — nunca no abstrato); **investigue, não assuma** (agnóstica de stack: descubra como o
-projeto roda olhando os arquivos).
+Two principles: **inspect before asking** (offer options with real data — apps, browsers —
+never in the abstract); **investigate, don't assume** (stack-agnostic: find out how the project
+runs by looking at the files).
 
-## Fluxo
+## Flow
 
-### 1. A porta já está ocupada?
+### 1. Is the port already in use?
 
 ```bash
-ss -ltn "sport = :PORT" | grep -q LISTEN && echo OCUPADA || echo LIVRE
+ss -ltn "sport = :PORT" | grep -q LISTEN && echo BUSY || echo FREE
 ```
 
-(`ss` checa quem *escuta*; `curl -sf` daria falso "livre" se a raiz responde 404/500.)
-**Ocupada** → reaproveite, pule pro passo 3. **Livre** → suba.
+(`ss` checks who's *listening*; `curl -sf` would give a false "free" if the root responds
+404/500.) **Busy** → reuse it, skip to step 3. **Free** → start it.
 
-### 2. Subir o server
+### 2. Start the server
 
-1. **Ache o comando dev.** Leia o manifest. **Monorepo** (`workspaces`, `turbo.json`,
-   `pnpm-workspace.yaml`, `nx.json`): o `dev` da raiz sobe *todos* os apps — liste os workspaces
-   com script `dev` e, se houver mais de um, pergunte qual. Trabalhe no dir do app.
-2. **Sobrescreva a porta:**
-   - Comando já fixa porta (`--port N`, `-p N`, `PORT=N`) → **troque o número** por `PORT`.
-   - Não fixa → adicione a flag do framework (se não souber, `<bin> --help` ou `find-docs`;
+1. **Find the dev command.** Read the manifest. **Monorepo** (`workspaces`, `turbo.json`,
+   `pnpm-workspace.yaml`, `nx.json`): the root `dev` starts *all* apps — list the workspaces
+   with a `dev` script and, if there's more than one, ask which. Work in the app's dir.
+2. **Override the port:**
+   - Command already pins a port (`--port N`, `-p N`, `PORT=N`) → **swap the number** for `PORT`.
+   - Doesn't pin one → add the framework's flag (if unsure, `<bin> --help` or `find-docs`;
      fallback `PORT=PORT`).
-   - **Force a porta exata** quando der (ex. Vite `--strictPort`) — sem auto-incremento.
-3. **Rode em background** (`run_in_background: true`), com log dedicado:
+   - **Force the exact port** when possible (e.g. Vite `--strictPort`) — no auto-increment.
+3. **Run it in the background** (`run_in_background: true`), with a dedicated log:
 
    ```bash
    cd apps/<app> && ./node_modules/.bin/<bin> dev --port PORT > /tmp/dev-here-PORT.log 2>&1
    ```
 
-4. **Espere o bind TCP** num Bash **bloqueante** (foreground) — *não* use `run_in_background`
-   aqui. Se a espera rodar em background, você avança e conecta a aba antes do server existir;
-   o `navigate` acerta uma porta sem listener. Bloqueie até o bind, depois siga pro passo 3:
+4. **Wait for the TCP bind** in a **blocking** (foreground) Bash — do *not* use
+   `run_in_background` here. If the wait runs in the background, you move on and connect the tab
+   before the server exists; `navigate` hits a port with no listener. Block until the bind, then
+   go to step 3:
 
    ```bash
    until ss -ltn "sport = :PORT" | grep -q LISTEN; do sleep 0.5; done
    ```
 
-   ~20s sem subir → leia o log e reporte o erro. (Primeiro build sem cache pode levar bem mais
-   que isso — se o log mostra "compiling", siga esperando.)
+   ~20s without coming up → read the log and report the error. (A first build with no cache can
+   take much longer than that — if the log shows "compiling", keep waiting.)
 
-5. **"Já tem server rodando" mesmo com a porta livre.** Alguns dev servers (ex. Next recente)
-   permitem só *uma* instância por diretório, independente da porta. Se o comando recusar com
-   "another server is already running" embora `ss` diga LIVRE, há outra instância no mesmo dir
-   noutra porta — ofereça reusá-la ou derrubá-la (com confirmação), não force.
+5. **"Server already running" even with the port free.** Some dev servers (e.g. recent Next)
+   allow only *one* instance per directory, regardless of port. If the command refuses with
+   "another server is already running" even though `ss` says FREE, there's another instance in
+   the same dir on another port — offer to reuse it or take it down (with confirmation), don't
+   force it.
 
-### 3. Conectar e travar a aba
+### 3. Connect and pin the tab
 
-1. **Selecione o browser.** `list_connected_browsers`, então pergunte (`AskUserQuestion`)
-   listando todos (nomes + deviceIds) + a opção de confirmar no Chrome. Recomende o device
-   marcado "on this computer": `localhost:PORT` só resolve na máquina onde o server subiu.
-2. **Ache ou crie a aba.** `tabs_context_mcp` (`createIfEmpty: true`): se já houver aba em
-   `localhost:PORT`, reuse-a; senão `tabs_create_mcp`. `navigate` pra `http://localhost:PORT`
-   (se não carregar, tente `https://`).
-3. **Grave o `tab_id` como `TARGET_TAB_ID`.**
-4. **Cheque a URL final — mas não confie no retorno do `navigate`.** Ele às vezes devolve a URL
-   antiga (`chrome://newtab/`) antes da navegação assentar. Confirme a URL real com um segundo
-   `tabs_context_mcp` (ou `read_page`) antes de decidir. Se redirecionou pra login (`/login`,
-   `/auth`, `/sign-in`, `/entrar`, `/acesso`, `/conta` e afins), **pare e peça pro usuário
-   logar** — você nunca insere credenciais. Quando avisar, siga. (Se a URL *ficou* na rota pedida
-   mas a tela mostra outra coisa, é redirect client-side por hidratação, não auth — trate como
-   carregou.)
+1. **Select the browser.** `list_connected_browsers`, then ask (`AskUserQuestion`) listing all
+   of them (names + deviceIds) + the option to confirm in Chrome. Recommend the device marked
+   "on this computer": `localhost:PORT` only resolves on the machine where the server started.
+2. **Find or create the tab.** `tabs_context_mcp` (`createIfEmpty: true`): if there's already a
+   tab on `localhost:PORT`, reuse it; otherwise `tabs_create_mcp`. `navigate` to
+   `http://localhost:PORT` (if it doesn't load, try `https://`).
+3. **Record the `tab_id` as `TARGET_TAB_ID`.**
+4. **Check the final URL — but don't trust `navigate`'s return.** It sometimes returns the old
+   URL (`chrome://newtab/`) before the navigation settles. Confirm the real URL with a second
+   `tabs_context_mcp` (or `read_page`) before deciding. If it redirected to login (`/login`,
+   `/auth`, `/sign-in`, `/entrar`, `/acesso`, `/conta` and the like), **stop and ask the user to
+   log in** — you never enter credentials. Once they say so, continue. (If the URL *stayed* on
+   the requested route but the screen shows something else, it's a client-side redirect from
+   hydration, not auth — treat it as loaded.)
 
-Sem screenshot — devolva o controle.
+No screenshot — hand control back.
 
-### 4. Armar o vigia (Monitor tool)
+### 4. Arm the watcher (Monitor tool)
 
-O vigia é o **contrato** desta skill — é o que entrega valor enquanto você devolve o controle.
-Arme-o sempre, mesmo quando `/dev-here` é só um passo de um trabalho maior: não saia pra tarefa
-deixando o server sem vigia.
+The watcher is this skill's **contract** — it's what delivers value while you hand control back.
+Always arm it, even when `/dev-here` is just one step of a larger job: don't walk off to the task
+leaving the server unwatched.
 
-Vigia **erros/warnings no log** e a **porta (se cair)**. Vigiar a porta — não um PID — sobrevive
-a reinícios do dev server. Cheque o listener com `ss` (não `lsof`): `lsof -ti tcp:PORT` lista
-*qualquer* processo ligado à porta, incluindo o **browser** conectado — quando ele desconecta,
-parece falsamente que o server caiu:
+It watches **errors/warnings in the log** and the **port (if it drops)**. Watching the port —
+not a PID — survives dev server restarts. Check the listener with `ss` (not `lsof`):
+`lsof -ti tcp:PORT` lists *any* process attached to the port, including the connected
+**browser** — when it disconnects, it falsely looks like the server went down:
 
 ```bash
 tail -n 0 -f /tmp/dev-here-PORT.log | grep -E --line-buffered \
@@ -108,53 +110,60 @@ while true; do
   sleep 2
 done
 kill $TPID 2>/dev/null
-echo "SERVER caiu na porta PORT — me peça pra subir de novo"
+echo "SERVER dropped on port PORT — ask me to start it again"
 ```
 
-`description: "server na porta PORT"`, `persistent: true`. **Não** sete um `timeout_ms` curto —
-`persistent` já mantém o vigia vivo; um timeout de poucos minutos deixa o server sem vigia no
-meio de uma sessão longa, sem aviso. `tail -n 0` = só linhas novas; dois misses (~4s sem a porta)
-= caiu de verdade, não um reinício. Server caiu → ofereça subir de novo. Erro relevante →
-`PushNotification` — mas **trie antes**: erro transitório de infra (DNS `EAI_AGAIN`, conexão a
-serviço externo, `DeprecationWarning`) não é acionável, não vale push. Se o server está em
-migração de schema e o log enche de erro de coluna/tabela esperado, pause o vigia (`TaskStop`) até
-estabilizar em vez de floodar.
+`description: "server on port PORT"`, `persistent: true`. **Don't** set a short `timeout_ms` —
+`persistent` already keeps the watcher alive; a few-minute timeout leaves the server unwatched in
+the middle of a long session, with no warning. `tail -n 0` = only new lines; two misses (~4s
+without the port) = really down, not a restart. Server dropped → offer to start it again.
+Relevant error → `PushNotification` — but **triage first**: a transient infra error (DNS
+`EAI_AGAIN`, a connection to an external service, `DeprecationWarning`) isn't actionable, not
+worth a push. If the server is mid schema migration and the log fills with expected
+column/table errors, pause the watcher (`TaskStop`) until it stabilizes instead of flooding.
 
-### 5. Devolver o controle
+### 5. Hand control back
 
-Reporte curto: porta, log, `TARGET_TAB_ID`, Monitor armado. Pare.
+Report briefly: port, log, `TARGET_TAB_ID`, Monitor armed. Stop.
 
-## Regra de ouro do isolamento
+## Golden rule of isolation
 
-- **Você possui uma aba: `TARGET_TAB_ID`** (`localhost:PORT`). Toda interação com o app vai nela.
-- **Confirme a URL ao conectar**, depois use o `tab_id` direto; re-valide só se uma ação falhar.
-- **Nunca** aja numa aba `localhost:<outra-porta>` — são de outros projetos/instâncias.
-- Abas que não são a sua não são problema seu — não as toque, não as bloqueie.
-## Interagir e debugar a aba (depois do setup)
+- **You own one tab: `TARGET_TAB_ID`** (`localhost:PORT`). Every interaction with the app goes
+  through it.
+- **Confirm the URL when connecting**, then use the `tab_id` directly; re-validate only if an
+  action fails.
+- **Never** act on a `localhost:<other-port>` tab — those belong to other projects/instances.
+- Tabs that aren't yours aren't your problem — don't touch them, don't block them.
 
-- **Texto > print.** Pra inspecionar/clicar, use `find` ou `read_page` (`filter=interactive`) —
-  barato e dá refs. Screenshot (~1,5k tok, só viewport, sem refs) só pro visual (layout/CSS/render).
-- **Passos previsíveis → `browser_batch`.** Encadeie ações conhecidas (`navigate`+`read_page`,
-  `form_input` em vários refs, click+type+press) numa só chamada e corte round-trips. Ele **não
-  passa saída→entrada**: se o próximo passo depende de um ref que você só descobre agora, vá normal.
-- **Server é vigiado; client é sob demanda.** O Monitor é passivo e te avisa sozinho — mas só
-  do **log do server** (stdout). O lado **client** (React, `fetch` 4xx/5xx, exceção no browser)
-  vive no **console do browser**, que o shell não consegue observar → **não há notificação
-  automática**. Pra ver, rode `read_console_messages` (`onlyErrors`)/`read_network_requests` na
-  aba **quando** a tela parecer quebrada ou uma ação falhar — não conte com aviso espontâneo.
-- **Storage/cookies.** `javascript_tool` lê `localStorage`/`sessionStorage` e cookies
-  não-HttpOnly direto. Cookie de sessão **HttpOnly** o JS não enxerga — e ver isso exigiria
-  CDP/debug port, que abandonaria este setup; então fica fora do alcance da skill.
+## Interacting with and debugging the tab (after setup)
 
-## Encerrar
+- **Text > screenshot.** To inspect/click, use `find` or `read_page` (`filter=interactive`) —
+  cheap and gives refs. Screenshot (~1.5k tok, viewport only, no refs) only for the visual
+  (layout/CSS/render).
+- **Predictable steps → `browser_batch`.** Chain known actions (`navigate`+`read_page`,
+  `form_input` across several refs, click+type+press) in a single call and cut round-trips. It
+  **doesn't pass output→input**: if the next step depends on a ref you only discover now, go the
+  normal way.
+- **The server is watched; the client is on demand.** The Monitor is passive and notifies you on
+  its own — but only from the **server log** (stdout). The **client** side (React, `fetch`
+  4xx/5xx, a browser exception) lives in the **browser console**, which the shell can't observe →
+  **there's no automatic notification**. To see it, run `read_console_messages` (`onlyErrors`)/
+  `read_network_requests` on the tab **when** the screen looks broken or an action fails — don't
+  count on a spontaneous alert.
+- **Storage/cookies.** `javascript_tool` reads `localStorage`/`sessionStorage` and non-HttpOnly
+  cookies directly. A **HttpOnly** session cookie is invisible to JS — and seeing it would
+  require a CDP/debug port, which would abandon this setup; so it's out of the skill's reach.
 
-Quando a tarefa terminar, **pergunte se quer encerrar**. Se sim, nesta ordem:
+## Shutting down
 
-1. `TaskStop` na **task de background do server** (se você o subiu com `run_in_background`) — só
-   matar o PID não basta: o harness/supervisor pode respawná-lo e a porta "volta".
-2. `TaskStop` no Monitor.
-3. Derrube o listener com `fuser -k PORT/tcp` (mata exatamente quem detém o socket de escuta;
-   `lsof -ti tcp:PORT | xargs kill` pegaria o **browser** ligado à porta, não o server). Se a
-   porta insistir em voltar mesmo assim, há supervisor externo — avise o usuário, não fique
-   tentando matar às cegas.
-4. `tabs_close_mcp` no `TARGET_TAB_ID` (só a sua aba) e remova o log.
+When the task is done, **ask whether to shut down**. If yes, in this order:
+
+1. `TaskStop` on the **server's background task** (if you started it with `run_in_background`) —
+   just killing the PID isn't enough: the harness/supervisor may respawn it and the port "comes
+   back".
+2. `TaskStop` on the Monitor.
+3. Take down the listener with `fuser -k PORT/tcp` (kills exactly who holds the listening socket;
+   `lsof -ti tcp:PORT | xargs kill` would catch the **browser** attached to the port, not the
+   server). If the port keeps coming back anyway, there's an external supervisor — tell the user,
+   don't keep killing blindly.
+4. `tabs_close_mcp` on `TARGET_TAB_ID` (your tab only) and remove the log.
