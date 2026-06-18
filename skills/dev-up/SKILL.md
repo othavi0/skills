@@ -1,13 +1,13 @@
 ---
-name: dev-here
+name: dev-up
 description: |
   Starts this folder's dev server on a specific port, opens a browser tab pinned to that
   port, and arms an error watcher — without touching other projects' tabs. Use when invoking
-  `/dev-here <port>` or when asked to start/view/monitor the server of one copy on a port
+  `/dev-up <port>` or when asked to start/view/monitor the server of one copy on a port
   without disturbing the others running in parallel.
 ---
 
-# dev-here
+# dev-up
 
 ## Why it exists
 
@@ -18,7 +18,7 @@ to **its** port.
 
 ## Invocation
 
-`/dev-here <port>`. With no argument, ask for the port. The port (`PORT`) is the source of
+`/dev-up <port>`. With no argument, ask for the port. The port (`PORT`) is the source of
 truth: the server binds to it, the tab navigates to it, the Monitor watches its log.
 
 Two principles: **inspect before asking** (offer options with real data — apps, browsers —
@@ -46,11 +46,19 @@ ss -ltn "sport = :PORT" | grep -q LISTEN && echo BUSY || echo FREE
    - Doesn't pin one → add the framework's flag (if unsure, `<bin> --help` or `find-docs`;
      fallback `PORT=PORT`).
    - **Force the exact port** when possible (e.g. Vite `--strictPort`) — no auto-increment.
+   - **Heads-up:** if the app pins its base URL/port elsewhere (auth callbacks, CORS origins,
+     OAuth redirects — grep the env/config for a `localhost:<port>`), running on a *different*
+     port can silently break login/CORS. See *Troubleshooting / gotchas*.
 3. **Run it in the background** (`run_in_background: true`), with a dedicated log:
 
    ```bash
-   cd apps/<app> && ./node_modules/.bin/<bin> dev --port PORT > /tmp/dev-here-PORT.log 2>&1
+   cd apps/<app> && ./node_modules/.bin/<bin> dev --port PORT > /tmp/dev-up-PORT.log 2>&1
    ```
+
+   If you edited env (`.env`/config) this session, **source it in the launch command**
+   (`set -a; . ./.env; set +a; <bin> dev ...`): a background child inherits the launching
+   shell's env — which a version manager (mise/asdf/direnv) may have populated at boot with
+   *stale* values — not your file edit. See *Troubleshooting / gotchas*.
 
 4. **Wait for the TCP bind** in a **blocking** (foreground) Bash — do *not* use
    `run_in_background` here. If the wait runs in the background, you move on and connect the tab
@@ -62,7 +70,10 @@ ss -ltn "sport = :PORT" | grep -q LISTEN && echo BUSY || echo FREE
    ```
 
    ~20s without coming up → read the log and report the error. (A first build with no cache can
-   take much longer than that — if the log shows "compiling", keep waiting.)
+   take much longer than that — if the log shows "compiling", keep waiting.) If the log shows a
+   **missing-module / dependency error** instead (common in a fresh checkout or worktree), the
+   deps aren't installed: install with the lockfile's package manager (`package-lock.json`→`npm i`,
+   `pnpm-lock.yaml`→`pnpm i`, `yarn.lock`→`yarn`, `bun.lockb`/`bun.lock`→`bun i`) and retry once.
 
 5. **"Server already running" even with the port free.** Some dev servers (e.g. recent Next)
    allow only *one* instance per directory, regardless of port. If the command refuses with
@@ -72,9 +83,11 @@ ss -ltn "sport = :PORT" | grep -q LISTEN && echo BUSY || echo FREE
 
 ### 3. Connect and pin the tab
 
-1. **Select the browser.** `list_connected_browsers`, then ask (`AskUserQuestion`) listing all
-   of them (names + deviceIds) + the option to confirm in Chrome. Recommend the device marked
-   "on this computer": `localhost:PORT` only resolves on the machine where the server started.
+1. **Select the browser.** `list_connected_browsers`. **Exactly one connected → use it directly**
+   (no question — the round-trip isn't worth it). **Two or more → ask** (`AskUserQuestion`) listing
+   all of them (names + deviceIds) + the option to confirm in Chrome, recommending the device
+   marked "on this computer": `localhost:PORT` only resolves on the machine where the server
+   started.
 2. **Find or create the tab.** `tabs_context_mcp` (`createIfEmpty: true`): if there's already a
    tab on `localhost:PORT`, reuse it; otherwise `tabs_create_mcp`. `navigate` to
    `http://localhost:PORT` (if it doesn't load, try `https://`).
@@ -92,7 +105,7 @@ No screenshot — hand control back.
 ### 4. Arm the watcher (Monitor tool)
 
 The watcher is this skill's **contract** — it's what delivers value while you hand control back.
-Always arm it, even when `/dev-here` is just one step of a larger job: don't walk off to the task
+Always arm it, even when `/dev-up` is just one step of a larger job: don't walk off to the task
 leaving the server unwatched.
 
 It watches **errors/warnings in the log** and the **port (if it drops)**. Watching the port —
@@ -101,7 +114,7 @@ not a PID — survives dev server restarts. Check the listener with `ss` (not `l
 **browser** — when it disconnects, it falsely looks like the server went down:
 
 ```bash
-tail -n 0 -f /tmp/dev-here-PORT.log | grep -E --line-buffered \
+tail -n 0 -f /tmp/dev-up-PORT.log | grep -E --line-buffered \
   "[Ee]rror|Exception|Traceback|[Ww]arn|Failed to compile|unhandled|ECONNREFUSED|EADDRINUSE|panic|FATAL" &
 TPID=$!
 miss=0
@@ -134,12 +147,18 @@ Report briefly: port, log, `TARGET_TAB_ID`, Monitor armed. Stop.
   action fails.
 - **Never** act on a `localhost:<other-port>` tab — those belong to other projects/instances.
 - Tabs that aren't yours aren't your problem — don't touch them, don't block them.
+- **Never close or modify the shared MCP tab group itself** — it's collective, and other Claude
+  instances live in sibling tabs inside it. Operate only on your own `tab_id` (see *Shutting down*
+  for the last-tab hazard).
 
 ## Interacting with and debugging the tab (after setup)
 
 - **Text > screenshot.** To inspect/click, use `find` or `read_page` (`filter=interactive`) —
   cheap and gives refs. Screenshot (~1.5k tok, viewport only, no refs) only for the visual
-  (layout/CSS/render).
+  (layout/CSS/render). **The first navigation to a route triggers an on-demand compile**
+  (Vite/Turbopack/webpack) — while it runs the renderer is busy and `screenshot`/CDP actions
+  time out ("renderer busy"). Wait for the route to settle (or retry once); during the build,
+  prefer text / `javascript_tool` reads over screenshots.
 - **Predictable steps → `browser_batch`.** Chain known actions (`navigate`+`read_page`,
   `form_input` across several refs, click+type+press) in a single call and cut round-trips. It
   **doesn't pass output→input**: if the next step depends on a ref you only discover now, go the
@@ -154,6 +173,30 @@ Report briefly: port, log, `TARGET_TAB_ID`, Monitor armed. Stop.
   cookies directly. A **HttpOnly** session cookie is invisible to JS — and seeing it would
   require a CDP/debug port, which would abandon this setup; so it's out of the skill's reach.
 
+## Troubleshooting / gotchas
+
+Stack-agnostic edge cases seen in practice — check these when something's off:
+
+- **An edited `.env`/config doesn't take effect.** A running server won't pick up env changes,
+  and a server you launch in the background inherits the env of the *shell that launched it* —
+  which a version manager (mise/asdf/direnv) may have populated at boot with stale values. If you
+  changed env this session, source it in the launch command (`set -a; . ./.env; set +a; …`) or
+  relaunch from a fresh shell. Don't trust an edit alone.
+- **The app hardcodes its base URL/port.** Auth callbacks, CORS origins, OAuth redirect URIs and
+  cookie domains are often pinned to a specific `http://localhost:<port>` in env/config. Run on a
+  *different* port than they expect and login redirects, CORS, or cookies break silently (often a
+  bounce to `/login`). Grep the config/env for the port before switching; if it's pinned, warn the
+  user that another port breaks those flows.
+- **The background server dies when the launching process exits or pauses** — notably while it's
+  off dispatching long-running subagents. The watcher's port-drop detection catches this and you
+  offer a restart; if you're about to hand off to long subagent work, re-check the port
+  (`ss -ltn "sport = :PORT"`) when you come back instead of assuming it's still up.
+- **Fresh checkout/worktree → missing dependencies.** A missing-module error on startup means deps
+  aren't installed — install with the lockfile's package manager and retry (see step 2).
+- **The port keeps coming back after you kill it.** An external supervisor (a `turbo dev`/`bun dev`
+  in your terminal, a process manager) is respawning it — don't kill blindly, tell the user (see
+  *Shutting down*).
+
 ## Shutting down
 
 When the task is done, **ask whether to shut down**. If yes, in this order:
@@ -166,4 +209,11 @@ When the task is done, **ask whether to shut down**. If yes, in this order:
    `lsof -ti tcp:PORT | xargs kill` would catch the **browser** attached to the port, not the
    server). If the port keeps coming back anyway, there's an external supervisor — tell the user,
    don't keep killing blindly.
-4. `tabs_close_mcp` on `TARGET_TAB_ID` (your tab only) and remove the log.
+4. **Close only your own tab — nothing else.** `tabs_close_mcp` on `TARGET_TAB_ID` and only that.
+   "Close/finish" means *only the tab(s) you were monitoring*: never close the **shared MCP tab
+   group** or any tab you didn't open — other Claude instances are working in sibling tabs in that
+   same group, and taking the group down kills their tabs too. ⚠️ **Last-tab hazard:** if yours is
+   the *last* tab in the group, closing it can make the browser collapse the whole group. If it
+   might be the last, or you're unsure whether others are still attached, **leave the tab open**
+   (or navigate it to `about:blank`) and just stop the server + monitor — never risk the group to
+   tidy up one tab. Then remove the log.
