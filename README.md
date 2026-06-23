@@ -1,5 +1,7 @@
 # noctua-skills
 
+[![skills.sh](https://skills.sh/b/othavi0/skills)](https://skills.sh/othavi0/skills)
+
 Claude Code skills I actually use, packaged to drop into any project. Curated,
 not exhaustive: each one earns its place or it is cut.
 
@@ -8,39 +10,63 @@ Code reads the `description` to decide when to trigger; the body guides the run.
 Heavier material loads on demand from a `references/` folder, so the trigger
 stays cheap.
 
-## The skills
-
-| skill | what it does | invoke |
-| --- | --- | --- |
-| **claude-md-prune** | Subtractive audit of `CLAUDE.md`: cuts derivable content and flags drift (paths, commands, ADRs no longer matching the code), following the Boris Cherny / Anthropic filter — *"would removing this cause Claude to make mistakes? If not, cut it."* | auto, when you mention trimming or auditing `CLAUDE.md` |
-| **dev-up** | Starts the current folder's dev server on a chosen port, opens one browser tab pinned to that port, and arms an error watcher — then hands control back. Built for running several servers and tabs in parallel without disturbing them. First run on a machine bootstraps the claude-in-chrome connection itself. | `/dev-up <port>` |
-| **humanize-pt-br** | Removes AI tells from Brazilian-Portuguese prose — 30+ verified patterns (inflated vocabulary, formulaic triggers, impersonal passive, negative parallelism, sycophancy). Wikipedia's *Signs of AI writing* adapted to PT-BR, plus Strunk. | auto, when editing PT-BR prose |
-
 ## Install
 
-Skills live in `~/.claude/skills` (global, every project) or `.claude/skills`
-(one project). Copy the ones you want:
+The fast path is the [skills.sh](https://skills.sh) CLI — no clone, no copy:
 
 ```bash
-git clone https://github.com/othavi0/noctua-skills
+# all of them, into the current project
+npx skills@latest add othavi0/skills
 
-# all of them, globally
-cp -r noctua-skills/skills/{claude-md-prune,dev-up,humanize-pt-br} ~/.claude/skills/
+# globally, for every project
+npx skills@latest add othavi0/skills --global
 
 # or just one
-cp -r noctua-skills/skills/dev-up ~/.claude/skills/
+npx skills@latest add othavi0/skills -s dev-up
 ```
 
-Then run `/reload-skills` (or restart Claude Code). Invoke a skill by its slash
-command, or let model-invocable ones trigger on their own.
+Prefer to do it by hand? Skills live in `~/.claude/skills` (global) or
+`.claude/skills` (one project) — copy the ones you want:
+
+```bash
+git clone https://github.com/othavi0/skills noctua-skills
+cp -r noctua-skills/skills/engineering/dev-up ~/.claude/skills/
+```
+
+Either way, run `/reload-skills` (or restart Claude Code) afterwards. Invoke a
+skill by its slash command, or let the model-invocable ones trigger on their own.
+
+## The skills
+
+### Engineering
+
+- **[dev-up](./skills/engineering/dev-up/SKILL.md)** — `/dev-up <port>` — starts the
+  current folder's dev server on a chosen port, opens one browser tab pinned to that
+  port, and arms an error watcher, then hands control back. Built for running several
+  servers and tabs in parallel without disturbing them. First run on a machine
+  bootstraps the claude-in-chrome connection itself.
+- **[claude-md-prune](./skills/engineering/claude-md-prune/SKILL.md)** — *auto* — subtractive
+  audit of `CLAUDE.md`: cuts derivable content and flags drift (paths, commands, ADRs no
+  longer matching the code), following the Boris Cherny / Anthropic filter — *"would
+  removing this cause Claude to make mistakes? If not, cut it."* Triggers when you mention
+  trimming or auditing `CLAUDE.md`.
+
+### Writing
+
+- **[humanize-pt-br](./skills/writing/humanize-pt-br/SKILL.md)** — *auto* — removes AI tells
+  from Brazilian-Portuguese prose: 30+ verified patterns (inflated vocabulary, formulaic
+  triggers, impersonal passive, negative parallelism, sycophancy). Wikipedia's *Signs of AI
+  writing* adapted to PT-BR, plus Strunk. Triggers when editing PT-BR prose.
 
 ## Structure
 
 ```
 skills/
-  claude-md-prune/   SKILL.md + references/
-  dev-up/            SKILL.md + references/
-  humanize-pt-br/    SKILL.md + patterns-pt-br.md
+  engineering/
+    claude-md-prune/   SKILL.md + references/
+    dev-up/            SKILL.md + references/
+  writing/
+    humanize-pt-br/    SKILL.md + patterns-pt-br.md
 ```
 
 ## Notes
