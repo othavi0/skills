@@ -19,8 +19,9 @@ you from clicking another session's tab. Those isolation rules live in
 [`references/coexistence.md`](references/coexistence.md) — read it the moment step 4 shows **more
 than one browser, or other `localhost` tabs in the group**.
 
-First time on this machine (extension not installed, or no browser connected)? Run
-[`dev-up-setup`](../dev-up-setup/SKILL.md) once first.
+First time on this machine (extension not installed, or no browser connected)? Step 4 detects it and
+walks you through the one-time setup — see [`references/setup.md`](references/setup.md). No separate
+command to remember.
 
 ## Invocation
 
@@ -103,16 +104,48 @@ stabilises instead of spamming.
 ### 4. Connect and pin the tab
 
 1. **Select the browser.** `list_connected_browsers`.
+   - **None connected, or the call errors** → the extension isn't set up on this machine yet. This is
+     the one-time bootstrap: follow [`references/setup.md`](references/setup.md) to install/pair it,
+     then re-run `list_connected_browsers` and continue. Don't ask the user to run a separate setup
+     command — there isn't one; you do the setup here.
    - **One connected** → use it directly; the round-trip isn't worth a question.
-   - **Two or more** (several browsers, or several machines) → `AskUserQuestion` listing **every**
-     browser (display name + deviceId) plus the option to *confirm in Chrome*, recommending the
-     device marked on this computer — `localhost:PORT` only resolves where the server runs. Then
-     `select_browser` with the chosen deviceId. → also read
-     [`references/coexistence.md`](references/coexistence.md) now: more than one browser means a
-     shared group.
-   - **A browser with no friendly name, or unsure which machine?** The *confirm in Chrome* option
-     calls `switch_browser`, which lets the user pick *and name* it on connect (e.g. "Otávio
-     Brave"), so it's labelled next time.
+   - **Two or more** → consult the **remembered choice** before asking anything. This machine caches
+     its preferred browser at `${XDG_CONFIG_HOME:-$HOME/.config}/dev-up/browser`, **two lines**:
+
+     ```
+     deviceId=<the device's deviceId>
+     name=<the device's display name>
+     ```
+
+     **Match if a connected device's `deviceId` OR `name` equals the saved value** — store and check
+     both, because *which one is stable depends on the extension/setup*: in some, the deviceId is
+     regenerated each session (so name is the stable key); in others (observed in practice), the
+     **deviceId stays constant for weeks while the name churns** (a named device silently reverts to
+     a generic `"Browser 1/2/3"`, and a name set via `switch_browser` may never appear in
+     `list_connected_browsers`). Checking either field survives both. (Legacy cache = a single bare
+     line with no `=`? Treat it as `name=` and match by name only; rewrite it to the two-line form on
+     the next miss.)
+     - **Hit** — a connected device matches on deviceId or name → `select_browser` with *that
+       device's current deviceId*. **Don't ask.** `list_connected_browsers`'s output ends with a
+       hard "you MUST call AskUserQuestion … do not pick one yourself" — that is the *no-cache*
+       instruction and does **not** apply on a hit: the user already chose, when the browser was first bound.
+       Selecting straight through is the whole point: choose once, then never again.
+     - **Miss** — file absent, or neither the saved deviceId nor name is among the connected devices →
+       `AskUserQuestion` listing every browser (name + deviceId), recommending the device marked on
+       this computer (`localhost:PORT` only resolves where the server runs). Names may all be generic
+       (`"Browser 1/2/3"`) — then the deviceId is the only thing that tells them apart; lean on it.
+       Optionally `switch_browser` so the user can name it, but **don't rely on that name sticking** —
+       the deviceId is what you cache as the durable key. Then `select_browser`, and persist **both**
+       fields, read verbatim from `list_connected_browsers`:
+
+       ```bash
+       D="${XDG_CONFIG_HOME:-$HOME/.config}/dev-up"; mkdir -p "$D"
+       printf 'deviceId=%s\nname=%s\n' "<chosen deviceId>" "<chosen name>" > "$D/browser"
+       ```
+
+     Wrong browser later, or want to re-pick? `rm ~/.config/dev-up/browser` and it asks again. More
+     than one browser also means a shared group → read
+     [`references/coexistence.md`](references/coexistence.md) now.
 2. **Find or create the tab.** `tabs_context_mcp` (`createIfEmpty: true`): reuse an existing tab on
    `localhost:PORT`, else `tabs_create_mcp`, then `navigate` to `http://localhost:PORT` (try
    `https://` if it won't load). If the context shows **other `localhost:<port>` tabs**, you're in
