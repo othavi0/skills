@@ -25,12 +25,31 @@ startup misbehaves.
 - **The app hardcodes its base URL/port.** Auth callbacks, CORS origins, OAuth redirect URIs and
   cookie domains are often pinned to a specific `http://localhost:<port>` in env/config. Run on a
   *different* port than they expect and login (often a silent bounce to `/login`), CORS, or cookies
-  break. Grep the config/env for the port before switching; if it's pinned, warn the user that
-  another port breaks those flows.
+  break. Grep the config/env for the port before switching; if it's pinned, **emit a one-line inline
+  warning and keep going on the port the user asked for** — e.g. "Note: `BETTER_AUTH_URL` is pinned
+  to :3001, so login/CORS may break on :PORT." **Don't turn this into an `AskUserQuestion`** that
+  re-asks a port they already gave — that's a wasted round-trip, not a real choice. (Only when *you*
+  pick the port — they gave none — prefer the pinned one and say why in a line.)
 - **The background server dies when the launching process exits or pauses** — notably while it's
   off dispatching long-running subagents. If *you* launched it with `run_in_background` (the normal
   path), the harness re-invokes you when that task exits, so the death is signalled for free. Just
   re-check the port (`ss -ltn "sport = :PORT"`) when you come back from long subagent work.
+
+## The browser tab shows a Chrome "error page" / `claude-in-chrome` calls fail
+
+A `claude-in-chrome` call returning "Frame … is showing error page", or `read_page`/`computer`
+failing, means the **tab** is wedged — not necessarily the server. Localise the fault before
+retrying:
+
+- **Curl the server directly:** `curl -s -o /dev/null -w "status=%{http_code}\n" http://localhost:PORT`.
+  A 200/307 means the server's healthy and the tab/CDP is the problem (a 307 → `/login` is just the
+  unauthenticated bounce — curl carries no cookie — not an error).
+- **After a server restart**, the CDP attach to the old tab often breaks (every call errors). Don't
+  loop screenshots — open a fresh tab via `tabs_context_mcp`/`tabs_create_mcp` or re-`navigate`, then
+  re-confirm the URL.
+- **Stop after ~2 failed `claude-in-chrome` calls** on the same tab and switch to curl + log reads;
+  hammering a wedged tab just burns calls (one real run spent six screenshots on a dead CDP link
+  before checking the server, which was fine all along).
 
 ## Watching a server you didn't start (port-poll fallback)
 
@@ -48,4 +67,5 @@ done
 echo "SERVER dropped on port PORT — ask me to start it again"
 ```
 
-`persistent: true`, no `timeout_ms`. Two misses (~4s) = really down, not a restart.
+`persistent: true` (that's what keeps it alive; any `timeout_ms` is ignored). Two misses (~4s) =
+really down, not a restart.

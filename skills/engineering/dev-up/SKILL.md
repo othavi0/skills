@@ -1,10 +1,10 @@
 ---
 name: dev-up
 description: |
-  Starts this folder's dev server on a chosen port, opens one browser tab pinned to that port,
-  and arms an error watcher — then hands control back. Use when invoking `/dev-up <port>`, or
-  when asked to start, open, view, run, or monitor the dev server of a project on a specific
-  port — especially when other servers or tabs are running in parallel and must not be disturbed.
+  Use when invoking `/dev-up <port>`, or when asked to start, open, view, run, serve, or monitor
+  this project's dev server on a specific port — especially when other servers or browser tabs are
+  already running in parallel and must not be disturbed. Pins one dev server to one port, opens a
+  single browser tab you own at that port, and arms an error watcher before handing control back.
 ---
 
 # dev-up
@@ -25,7 +25,9 @@ command to remember.
 
 ## Invocation
 
-`/dev-up <port>`. With no argument, ask for the port.
+`/dev-up <port>`. With no argument, ask for the port — **unless the folder has no dev server at
+all** (no manifest, or a manifest with no `dev` script): inspect first, and if there's nothing to
+run, say so instead of asking for a port for a server that doesn't exist.
 
 Two habits throughout: **inspect before asking** (offer options built from real data — apps,
 browsers — never in the abstract), and **investigate, don't assume** (stack-agnostic: learn how
@@ -53,7 +55,8 @@ ss -ltn "sport = :PORT" | grep -q LISTEN && echo BUSY || echo FREE
    fallback `PORT=PORT`). Force the exact port where the framework allows (e.g. Vite
    `--strictPort`) so it can't auto-increment onto a neighbour. **Before settling on a port other
    than the app's usual one**, grep env/config for a hardcoded `localhost:<port>` (auth callbacks,
-   CORS, OAuth redirects): if it's pinned, a different port silently breaks login/CORS — see
+   CORS, OAuth redirects): if it's pinned, a different port silently breaks login/CORS — **warn in
+   one line and keep going on the port the user asked for; don't re-ask it.** See
    [`references/troubleshooting.md`](references/troubleshooting.md).
 3. **Run it in the background** (`run_in_background: true`), with a dedicated log:
 
@@ -66,31 +69,46 @@ ss -ltn "sport = :PORT" | grep -q LISTEN && echo BUSY || echo FREE
    env (`.env`/config) this session, source it in the launch command
    (`set -a; . ./.env; set +a; <bin> dev ...`) — a background child inherits the launching shell's
    env, which a version manager may have seeded with stale values, not your edit.
-4. **Wait for the TCP bind in a blocking (foreground) Bash** — never `run_in_background` here, or
-   you move on before a listener exists:
+4. **Wait for the TCP bind in a blocking (foreground) Bash.** **Foreground only — never
+   `run_in_background` on *this* call.** Backgrounded, the loop returns a task id instead of
+   blocking, so you move on before any listener exists, then patch over it with manual polls or a
+   second loop:
 
    ```bash
    until ss -ltn "sport = :PORT" | grep -q LISTEN; do sleep 0.5; done
    ```
 
    ~20s with no bind → read the log and report. (A first, uncached build can take far longer — if
-   the log says "compiling", keep waiting.) A **missing-module / dependency error**, or "another
-   server is already running" despite a FREE port → see
+   the log says "compiling", keep waiting.) **Bind ≠ ready** for a slow stack (Python/Flask can take
+   15–40s to *serve* after the socket binds): there, a foreground HTTP-readiness poll
+   (`curl -s -o /dev/null --retry 60 --retry-connrefused --retry-delay 1 http://localhost:PORT`)
+   waits for the app to actually answer, not just bind. A **missing-module / dependency error**, or
+   "another server is already running" despite a FREE port → see
    [`references/troubleshooting.md`](references/troubleshooting.md).
 
 ### 3. Arm the watcher — the moment the port binds
 
 Do this **before** the tab. It's the skill's **contract** — what earns its keep while you're away
 — and arming it here, attention still on the terminal, is what stops it slipping through the
-handback. One Monitor, persistent, filtering the log for trouble:
+handback.
+
+**Load the deferred tools you'll need now, in one `ToolSearch`** — `Monitor`, `PushNotification`,
+`TaskStop`, and the `claude-in-chrome` set (`list_connected_browsers`, `select_browser`,
+`switch_browser`, `tabs_context_mcp`, `tabs_create_mcp`, `navigate`, `read_page`). Every run needs
+them; a second `ToolSearch` later for one you skipped is a wasted round-trip.
+
+One Monitor, persistent, filtering the log for trouble:
 
 ```bash
 tail -n 0 -f /tmp/dev-up-PORT.log | grep -E --line-buffered \
   "[Ee]rror|Exception|Traceback|[Ww]arn|Failed to compile|unhandled|ECONNREFUSED|EADDRINUSE|panic|FATAL"
 ```
 
-`description: "errors on port PORT"`, `persistent: true`, **no `timeout_ms`** (a timeout would
-silently stop watching mid-session). `tail -n 0` = new lines only. **No port-polling here** — the
+`description: "errors on port PORT"`, **`persistent: true`** — that flag is the whole safety: it
+keeps the watcher alive for the entire session, and with it set the Monitor's `timeout_ms` is
+ignored (the tool requires the field, but it has no effect, so don't waste thought tuning it; a
+value like `300000` does *not* stop the watcher when `persistent` is true). `tail -n 0` = new lines
+only. **No port-polling here** — the
 server's death already re-invokes you via step 2's background task; the Monitor only catches errors
 while it's alive. (Reused a server you didn't start? Its death won't auto-signal — re-check the
 port when you return, or add the port-poll fallback in
@@ -109,8 +127,10 @@ stabilises instead of spamming.
      then re-run `list_connected_browsers` and continue. Don't ask the user to run a separate setup
      command — there isn't one; you do the setup here.
    - **One connected** → use it directly; the round-trip isn't worth a question.
-   - **Two or more** → consult the **remembered choice** before asking anything. This machine caches
-     its preferred browser at `${XDG_CONFIG_HOME:-$HOME/.config}/dev-up/browser`, **two lines**:
+   - **Two or more** → **read the remembered choice first — every time, before any `AskUserQuestion`.**
+     Reaching for `AskUserQuestion` before you've read the cache is the bug: it re-asks a browser the
+     user already picked. This machine caches its preferred browser at
+     `${XDG_CONFIG_HOME:-$HOME/.config}/dev-up/browser`, **two lines**:
 
      ```
      deviceId=<the device's deviceId>
@@ -135,8 +155,10 @@ stabilises instead of spamming.
        this computer (`localhost:PORT` only resolves where the server runs). Names may all be generic
        (`"Browser 1/2/3"`) — then the deviceId is the only thing that tells them apart; lean on it.
        Optionally `switch_browser` so the user can name it, but **don't rely on that name sticking** —
-       the deviceId is what you cache as the durable key. Then `select_browser`, and persist **both**
-       fields, read verbatim from `list_connected_browsers`:
+       the deviceId is what you cache as the durable key. **`switch_browser` does not return a
+       `deviceId`**, so after `select_browser` call `list_connected_browsers` once more and copy the
+       exact `deviceId` from there. Persist **both** fields, read verbatim — writing only the name
+       (the legacy one-line form) guarantees a miss on every later run:
 
        ```bash
        D="${XDG_CONFIG_HOME:-$HOME/.config}/dev-up"; mkdir -p "$D"
@@ -147,24 +169,30 @@ stabilises instead of spamming.
      than one browser also means a shared group → read
      [`references/coexistence.md`](references/coexistence.md) now.
 2. **Find or create the tab.** `tabs_context_mcp` (`createIfEmpty: true`): reuse an existing tab on
-   `localhost:PORT`, else `tabs_create_mcp`, then `navigate` to `http://localhost:PORT` (try
-   `https://` if it won't load). If the context shows **other `localhost:<port>` tabs**, you're in
-   a shared group → [`references/coexistence.md`](references/coexistence.md).
+   `localhost:PORT`, else `tabs_create_mcp`, then `navigate` to **`http://localhost:PORT` — the
+   root, not a deep route** (try `https://` if it won't load). Root surfaces any login redirect
+   whatever route the app lands on, so you catch auth before going deeper; navigating straight to a
+   protected sub-path on first load can 307 into a Chrome error page that then blocks every
+   `claude-in-chrome` call. Once the root's confirmed, navigate on to the route you actually need.
+   If the context shows **other `localhost:<port>` tabs**, you're in a shared group →
+   [`references/coexistence.md`](references/coexistence.md).
 3. **Record the `tab_id` as `TARGET_TAB_ID`** — the one tab you own.
 4. **Confirm the final URL — don't trust `navigate`'s return** (it sometimes reports the old
-   `chrome://newtab/` before the nav settles). Re-check with `tabs_context_mcp` or `read_page`. If
-   it redirected to login (`/login`, `/auth`, `/sign-in`, `/entrar`, `/acesso`, `/conta` …),
-   **stop and ask the user to log in** — you never enter credentials; continue once they confirm.
-   (URL unchanged but the screen differs → a client-side hydration redirect, not auth; treat as
-   loaded.)
-
-No screenshot.
+   `chrome://newtab/` before the nav settles). Re-check with `tabs_context_mcp` or `read_page` —
+   **never a screenshot to confirm a URL.** `cic:computer` is the wrong tool here: viewport-only, it
+   returns no URL text and times out (~30s) while the renderer compiles a first-visit route. If it
+   redirected to login (`/login`, `/auth`, `/sign-in`, `/entrar`, `/acesso`, `/conta` …), **stop and
+   ask the user to log in** — you never enter credentials; continue once they confirm. (URL
+   unchanged but the screen differs → a client-side hydration redirect, not auth; treat as loaded.)
 
 ### 5. Hand control back
 
-Gate first: the watcher is the contract, so **don't report until `TaskList` shows the Monitor task
-running** — no Monitor, the job isn't done, however good the tab looks. Then report: port, log
-path, `TARGET_TAB_ID`, Monitor armed. Stop.
+Gate first: the watcher is the contract, and its proof is **the Monitor's own start return** — a
+task id plus *"persistent — runs until TaskStop or session end"*. That return **is** the gate: got
+it, the watcher's live; errored or no task id, re-arm before reporting. **Don't reach for `TaskList`
+to check** — a Monitor is a background process and never appears there, so `TaskList` always says
+"No tasks found" and the gate looks falsely failed (which only tempts you to skip it). Then report:
+port, log path, `TARGET_TAB_ID`, Monitor task id. Stop.
 
 ## After setup
 
