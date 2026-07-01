@@ -62,6 +62,11 @@ In order: issue references in the commit messages (`#123`, `Closes #45` — fetc
 `docs/`, `specs/`, `plans/`, or `.scratch/` matching the branch or feature name; otherwise ask.
 If the user says there is no spec, the Spec axis is skipped and the report says so.
 
+One degenerate case: when the range is a single commit whose PR/commit body merely restates the
+diff, that body is not an independent requirements source — use the linked issue as the spec, and
+if there's only the commit message, report "no independent spec" rather than verifying the diff
+against a paraphrase of itself.
+
 ### 3. Identify the standards sources
 
 Anything in the repo that documents how code should be written: `CLAUDE.md`,
@@ -76,7 +81,8 @@ hard violation. Skip anything tooling already enforces.
 
 Use `general-purpose` sub-agents. Every prompt includes the diff command and the commit list.
 
-**Standards** — plus the standards-file list and the smell baseline pasted in full. Brief:
+**Standards** — plus the standards sources (paths, plus a condensed summary of the key rules —
+saves the sub-agent from re-reading everything) and the smell baseline pasted in full. Brief:
 "Report, per file/hunk: (a) every place the diff violates a documented standard — cite the
 standard (file + rule); (b) any baseline smell — name it and quote the hunk. Distinguish hard
 violations (documented) from judgement calls (smells). Skip anything tooling enforces.
@@ -101,8 +107,10 @@ false-positive catalog. Under 400 words."
 For each candidate, spawn an independent verifier — all in one message. Each verifier receives
 the candidate, the relevant diff excerpt, and the rubric from
 [`references/rubric.md`](references/rubric.md) **verbatim**. It returns a 0-100 score plus a
-one-line justification. Discard anything under 80. Tell the report how many candidates were
-filtered — transparency about the kill rate is part of the value.
+one-line justification. Discard anything under 80 from the findings. Tell the report how many
+candidates were filtered — transparency about the kill rate is part of the value. A near-miss
+(75-79 with solid evidence) may appear as a single "noted, below threshold (score N)" line in the
+Bugs section; it never enters the counts or the recommendation.
 
 The verifier is independent on purpose: the finder is rewarded for recall and will over-report;
 a fresh agent judging one claim against the rubric has no stake in keeping it alive.
@@ -112,6 +120,11 @@ a fresh agent judging one claim against the rubric has no stake in keeping it al
 Present the axes under `## Standards`, `## Spec`, and `## Bugs (verified)` — verbatim or lightly
 cleaned, each with a one-line summary (finding count + worst issue *within that axis*). Do **not**
 merge or rerank findings across axes — the separation exists so one axis can't mask another.
+
+An adjacent discovery that fails the false-positive catalog (a pre-existing problem, say) is not
+a finding — but when it's genuinely valuable, surface it as a clearly-labelled *"out of scope,
+not a finding"* aside. Transparency, not inflation: it stays out of the counts and the
+recommendation.
 
 End with a mandatory **Recommendation** block: one of **ship** / **fix first** (with a short
 ranked list) / **needs rework**, plus the one-sentence why. The recommendation answers "what
