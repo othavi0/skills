@@ -41,6 +41,12 @@ that moved, commands that changed, advice the code already enforces.
 cause Claude to make mistakes? If not, cut it"* — and flags the lines that drifted
 out of sync with the code.
 
+**Reviews that either nitpick or hallucinate.** A single-pass review mixes three different
+questions — does it follow the conventions, does it match the spec, is it actually correct — and
+lets a confident hallucination sit next to a real bug. `code-review` splits the axes into parallel
+sub-agents and puts every bug candidate through an independent verifier with a 0-100 confidence
+rubric; under 80 it dies.
+
 **Prose that reads like a machine wrote it.** Portuguese text from an LLM carries
 tells: inflated vocabulary, negative parallelism, sycophancy, em-dashes
 everywhere. `humanize-pt-br` strips 30+ verified patterns — Wikipedia's *Signs of
@@ -68,6 +74,11 @@ the reusable discipline.
 - **[claude-md-prune](./skills/engineering/claude-md-prune/SKILL.md)** — subtractive
   audit of `CLAUDE.md`: cut derivable content, flag drift (paths, commands, ADRs no
   longer matching the code). Triggers when you mention trimming or auditing `CLAUDE.md`.
+- **[code-review](./skills/engineering/code-review/SKILL.md)** — three-axis review of the diff
+  since a fixed point: Standards (repo conventions + a Fowler smell baseline), Spec (does the
+  diff match the originating issue/PRD?), and Bugs (defect hunt with git-history context, every
+  candidate re-judged on a 0-100 confidence rubric — <80 is discarded). Ends with a single
+  ship / fix-first recommendation. Has a cheap single-agent fast path for small diffs.
 
 ### Writing
 
@@ -84,6 +95,7 @@ the reusable discipline.
 skills/
   engineering/
     claude-md-prune/   SKILL.md + references/
+    code-review/       SKILL.md + references/
     dev-up/            SKILL.md + references/
   writing/
     humanize-pt-br/    SKILL.md + references/
